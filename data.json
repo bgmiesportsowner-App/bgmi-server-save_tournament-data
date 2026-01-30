@@ -1,0 +1,23 @@
+{
+  "tournamentJoins": [
+    {
+      "id": "dSp5Q3GuDKRwSdvcVjQLV",
+      "tournamentId": "tm1",
+      "tournamentName": "1v1 TDM Tournament",
+      "mode": "1v1 TDM",
+      "rules": "No emulators • No stream sniping • Join room 10 min before.",
+      "date": "26/1/2026",
+      "time": "04:59 pm",
+      "map": "Warehouse",
+      "entryFee": "₹50",
+      "prizePool": "₹80",
+      "slots": 0,
+      "status": "Registered",
+      "playerName": "srtsrr",
+      "bgmiId": "tert",
+      "joinedAt": "2026-01-26T11:29:37.424Z"
+    }
+  ],
+  "tournamentRooms": {},
+  "deposits": []
+}

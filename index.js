@@ -1,207 +1,234 @@
+/* ============================= LOAD ENV ============================= */
+import dotenv from "dotenv";
+dotenv.config();
+
+/* ============================= IMPORTS ============================= */
 import express from "express";
 import cors from "cors";
 import { nanoid } from "nanoid";
+import { createClient } from "@supabase/supabase-js";
+import { format } from "date-fns-tz";
 
+/* ============================= APP ============================= */
 const app = express();
-app.use(cors());
+
+/* ============================= SUPABASE CLIENT ============================= */
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false
+    }
+  }
+);
+
+/* ============================= CORS ============================= */
+app.use(cors({
+  origin: true,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+app.options("*", cors());
 app.use(express.json());
 
-/* ============================= IN-MEMORY DATABASE ============================= */
+/* ============================= IN-MEMORY TOURNAMENT ============================= */
 let tournamentJoins = [];
 let tournamentRooms = {};
-let deposits = [];
 
-/* ============================= JOIN TOURNAMENT (USER) ============================= */
+/* ============================= HEALTH ============================= */
+app.get("/health", (req, res) => {
+  res.json({
+    status: "OK",
+    joins: tournamentJoins.length,
+    time: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
+  });
+});
+
+/* ============================= TOURNAMENT SYSTEM ============================= */
 app.post("/api/join-tournament", (req, res) => {
-const data = req.body;
+  const data = req.body;
+  if (!data.bgmiId || !data.tournamentId)
+    return res.status(400).json({ success: false });
 
-if (!data.bgmiId || !data.tournamentId) {
-return res.status(400).json({ success: false, message: "Invalid data" });
-}
+  const alreadyJoined = tournamentJoins.find(
+    j => j.tournamentId === data.tournamentId && j.bgmiId === data.bgmiId
+  );
+  if (alreadyJoined)
+    return res.json({ success: false, message: "Already joined" });
 
-const alreadyJoined = tournamentJoins.find(
-j => j.tournamentId === data.tournamentId && j.bgmiId === data.bgmiId
-);
-if (alreadyJoined) {
-return res.json({ success: false, message: "Already joined" });
-}
+  if (tournamentJoins.filter(j => j.tournamentId === data.tournamentId).length >= 2)
+    return res.json({ success: false, message: "Slots full" });
 
-const joinedCount = tournamentJoins.filter(
-j => j.tournamentId === data.tournamentId
-).length;
+  tournamentJoins.push({
+    id: nanoid(),
+    ...data,
+    status: "Registered",
+    joinedAt: new Date().toISOString()
+  });
 
-if (joinedCount >= 2) {
-return res.json({ success: false, message: "Slots full" });
-}
-
-tournamentJoins.push({
-id: nanoid(),
-tournamentId: data.tournamentId,
-tournamentName: data.tournamentName,
-date: data.date,
-time: data.time,
-entryFee: data.entryFee,
-prizePool: data.prizePool,
-playerName: data.playerName,
-bgmiId: data.bgmiId,
-status: "Registered",
-joinedAt: new Date().toISOString(),
+  res.json({ success: true });
 });
 
-res.json({ success: true });
-});
-
-/* ============================= CHECK JOIN STATUS ============================= */
 app.get("/api/check-join/:tournamentId", (req, res) => {
-const { tournamentId } = req.params;
-const { bgmiId } = req.query;
-
-if (!bgmiId) return res.json({ joined: false });
-
-const joined = tournamentJoins.some(
-j => j.tournamentId === tournamentId && j.bgmiId === bgmiId
-);
-
-res.json({ joined });
+  const joined = tournamentJoins.some(
+    j => j.tournamentId === req.params.tournamentId && j.bgmiId === req.query.bgmiId
+  );
+  res.json({ joined });
 });
 
-/* ============================= SLOT COUNT ============================= */
 app.get("/api/tournament-slots-count/:tournamentId", (req, res) => {
-const { tournamentId } = req.params;
-const registered = tournamentJoins.filter(
-j => j.tournamentId === tournamentId
-).length;
-
-res.json({ registered, max: 2 });
+  res.json({
+    registered: tournamentJoins.filter(j => j.tournamentId === req.params.tournamentId).length,
+    max: 2
+  });
 });
 
-/* ============================= ADMIN – GET ALL JOINS ============================= */
 app.get("/api/admin/joins", (req, res) => {
-const data = tournamentJoins.map(j => ({
-...j,
-roomId: tournamentRooms[j.tournamentId]?.roomId || "",
-roomPassword: tournamentRooms[j.tournamentId]?.roomPassword || "",
-}));
-
-res.json({ tournamentJoins: data });
+  res.json({
+    tournamentJoins: tournamentJoins.map(j => ({
+      ...j,
+      roomId: tournamentRooms[j.tournamentId]?.roomId || "",
+      roomPassword: tournamentRooms[j.tournamentId]?.roomPassword || ""
+    }))
+  });
 });
 
-/* ============================= ADMIN – SET ROOM ============================= */
 app.put("/api/admin/set-room-by-tournament", (req, res) => {
-const { tournamentId, roomId, roomPassword } = req.body;
-
-if (!tournamentId) {
-return res.status(400).json({ success: false });
-}
-
-tournamentRooms[tournamentId] = { roomId, roomPassword };
-res.json({ success: true });
+  tournamentRooms[req.body.tournamentId] = {
+    roomId: req.body.roomId,
+    roomPassword: req.body.roomPassword
+  };
+  res.json({ success: true });
 });
 
-/* ============================= ADMIN – DELETE USER ============================= */
 app.delete("/api/admin/tournament/:id", (req, res) => {
-const { id } = req.params;
-tournamentJoins = tournamentJoins.filter(j => j.id !== id);
-res.json({ success: true });
+  tournamentJoins = tournamentJoins.filter(j => j.id !== req.params.id);
+  res.json({ success: true });
 });
 
-/* ============================= USER – MY MATCHES ============================= */
 app.get("/api/my-matches", (req, res) => {
-const { bgmiId } = req.query;
-if (!bgmiId) return res.json({ matches: [] });
-
-const matches = tournamentJoins
-.filter(j => j.bgmiId === bgmiId)
-.map(j => ({
-...j,
-roomId: tournamentRooms[j.tournamentId]?.roomId || "",
-roomPassword: tournamentRooms[j.tournamentId]?.roomPassword || "",
-}));
-
-res.json({ matches });
+  res.json({
+    matches: tournamentJoins.filter(j => j.bgmiId === req.query.bgmiId)
+  });
 });
 
-/* 🔥 FIXED DEPOSIT CREATE - EMAIL SUPPORT */
-app.post("/api/deposit", (req, res) => {
-const { profileId, bgmiDisplayId, username, email, amount, utr, timestamp } = req.body;
+/* ============================= DEPOSIT → SUPABASE ============================= */
+app.post("/api/deposit", async (req, res) => {
+  const { profileId, username, email, amount, utr } = req.body;
 
-console.log("🧾 DEPOSIT REQUEST:", req.body);
+  if (!profileId || !amount || !utr) {
+    return res.status(400).json({ success: false, message: "Missing fields" });
+  }
 
-if (!profileId || !amount || !utr) {
-return res.status(400).json({
-success: false,
-message: "profileId, amount, and utr are required"
-});
-}
+  try {
+    const nowUTC = new Date().toISOString();
+    const nowIST = format(new Date(), "dd/MM/yyyy, hh:mm:ss a", { timeZone: "Asia/Kolkata" });
 
-const now = new Date();
-const newDeposit = {
-depositId: nanoid(),
-profileId: profileId.toString(),
-bgmiDisplayId: bgmiDisplayId || null,
-username: username || "Unknown",
-email: email || "No email provided", // ✅ FIXED - Default value
-amount: Number(amount),
-utr: utr.toString(),
-status: "pending",
-createdAt: now.toISOString(),
-timestamp: timestamp || now.toISOString(),
-approvedAt: null,
-};
+    const { data, error } = await supabase
+      .from("DepositUser")
+      .insert([{
+        profile_id: profileId.toString(),
+        name: username || "Unknown",
+        email: email || "no-email",
+        amount: Number(amount),
+        utr: utr.toString(),
+        status: 'pending',
+        date: nowUTC,
+        date_ist: nowIST
+      }])
+      .select()
+      .single();
 
-deposits.push(newDeposit);
-console.log("✅ NEW DEPOSIT ADDED:", newDeposit);
-res.json({ success: true, deposit: newDeposit });
-});
+    if (error) {
+      console.error("❌ SUPABASE ERROR:", error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
 
-/* 🔥 ADMIN DEPOSITS - INDIAN TIME */
-app.get("/api/admin/deposits", (req, res) => {
-console.log("📊 Total deposits:", deposits.length);
-console.log("📧 Sample email:", deposits[0]?.email); // ✅ DEBUG LOG
-
-const indianDeposits = deposits.map(deposit => ({
-...deposit,
-createdAtIndian: new Date(deposit.createdAt).toLocaleString('en-IN', {
-timeZone: 'Asia/Kolkata',
-day: 'numeric',
-month: 'short',
-year: 'numeric',
-hour: '2-digit',
-minute: '2-digit',
-hour12: true
-}),
-approvedAtIndian: deposit.approvedAt ? new Date(deposit.approvedAt).toLocaleString('en-IN', {
-timeZone: 'Asia/Kolkata',
-day: 'numeric',
-month: 'short',
-year: 'numeric',
-hour: '2-digit',
-minute: '2-digit',
-hour12: true
-}) : null
-}));
-
-res.json({ deposits: indianDeposits });
+    res.json({ success: true, deposit: data });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
 });
 
-/* 🔥 DEPOSIT STATUS UPDATE */
-app.put("/api/admin/deposit-status", (req, res) => {
-const { depositId, status } = req.body;
+// ADMIN STATUS UPDATE
+app.put("/api/admin/deposit-status/:id", async (req, res) => {
+  const { status } = req.body;
+  
+  if (!status) {
+    return res.status(400).json({ success: false, message: "Status required" });
+  }
 
-const deposit = deposits.find(d => d.depositId === depositId);
-if (!deposit) {
-return res.status(404).json({ success: false, message: "Deposit not found" });
-}
+  try {
+    const { data, error } = await supabase
+      .from("DepositUser")
+      .update({ status })
+      .eq("id", req.params.id)
+      .select()
+      .single();
 
-deposit.status = status;
-deposit.approvedAt = status === "approved" ? new Date().toISOString() : null;
+    if (error) {
+      console.error("❌ STATUS UPDATE ERROR:", error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
 
-console.log(`✅ Deposit ${depositId} updated to ${status}`);
-res.json({ success: true, deposit });
+    res.json({ success: true, deposit: data });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ✅ NEW ENDPOINT - ADMIN DELETE DEPOSIT
+app.delete("/api/admin/deposit/:id", async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from("DepositUser")
+      .delete()
+      .eq("id", req.params.id);
+
+    if (error) {
+      console.error("❌ DELETE ERROR:", error);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+/* USER DEPOSIT HISTORY */
+app.get("/api/deposits", async (req, res) => {
+  const { data, error } = await supabase
+    .from("DepositUser")
+    .select("*")
+    .order("date", { ascending: false });
+
+  if (error) return res.json({ deposits: [] });
+  res.json({ deposits: data });
+});
+
+/* ADMIN – ALL DEPOSITS */
+app.get("/api/admin/deposits", async (req, res) => {
+  const { data } = await supabase
+    .from("DepositUser")
+    .select("*")
+    .order("date", { ascending: false });
+
+  res.json({ deposits: data || [] });
 });
 
 /* ============================= SERVER START ============================= */
-const PORT = 5002;
-app.listen(PORT, () => {
-console.log("🔥 BGMI Server running on port", PORT);
+const PORT = process.env.PORT || 5002;
+app.listen(PORT, "0.0.0.0", () => {
+  console.log("🔥 BGMI Server running on port", PORT);
+  console.log("✅ Health: /health");
+  console.log("✅ Deposit → Supabase connected");
+  console.log("✅ Status update: PUT /api/admin/deposit-status/:id");
+  console.log("✅ Delete deposit: DELETE /api/admin/deposit/:id");
 });
